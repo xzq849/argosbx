@@ -1,0 +1,57 @@
+# 测试上游仓库连接
+name: Test Upstream Connection
+
+# 手动触发测试
+on:
+  workflow_dispatch:
+
+jobs:
+  test-connection:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+      - name: 🔍 测试上游仓库连接
+        run: |
+          echo "🔍 测试多种方法检查上游仓库..."
+          
+          echo "方法1: 使用curl检查GitHub页面"
+          if curl -s -f -I "https://github.com/yonggekkk/argosbx" >/dev/null 2>&1; then
+            echo "✅ curl检查成功"
+          else
+            echo "❌ curl检查失败"
+          fi
+          
+          echo ""
+          echo "方法2: 使用git ls-remote检查仓库"
+          if git ls-remote --heads https://github.com/yonggekkk/argosbx.git >/dev/null 2>&1; then
+            echo "✅ git ls-remote检查成功"
+          else
+            echo "❌ git ls-remote检查失败"
+          fi
+          
+          echo ""
+          echo "方法3: 尝试clone仓库（浅克隆）"
+          if git clone --depth=1 https://github.com/yonggekkk/argosbx.git test-repo >/dev/null 2>&1; then
+            echo "✅ 浅克隆成功"
+            rm -rf test-repo
+          else
+            echo "❌ 浅克隆失败"
+          fi
+          
+          echo ""
+          echo "方法4: 检查仓库是否存在（使用GitHub API）"
+          if curl -s "https://api.github.com/repos/yonggekkk/argosbx" | grep -q '"name"'; then
+            echo "✅ GitHub API检查成功"
+          else
+            echo "❌ GitHub API检查失败"
+          fi
+          
+          echo ""
+          echo "🔧 网络诊断信息："
+          echo "DNS解析测试："
+          nslookup github.com || echo "DNS解析失败"
+          
+          echo ""
+          echo "连接测试："
+          ping -c 3 github.com || echo "ping失败"

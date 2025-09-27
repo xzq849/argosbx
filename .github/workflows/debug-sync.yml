@@ -1,0 +1,82 @@
+# 调试版本的上游同步工作流
+name: Debug Upstream Sync
+
+# 手动触发
+on:
+  workflow_dispatch:
+
+jobs:
+  debug-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+      - name: 📥 检出仓库
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: ⚙️ 配置Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: 🔍 详细网络诊断
+        run: |
+          echo "=== 网络诊断开始 ==="
+          
+          echo "1. 测试基本网络连接:"
+          ping -c 3 8.8.8.8 || echo "无法ping 8.8.8.8"
+          
+          echo "2. 测试GitHub连接:"
+          ping -c 3 github.com || echo "无法ping github.com"
+          
+          echo "3. 测试DNS解析:"
+          nslookup github.com || echo "DNS解析失败"
+          
+          echo "4. 测试HTTP连接到GitHub:"
+          curl -v -I https://github.com 2>&1 | head -20
+          
+          echo "5. 测试特定仓库HTTP访问:"
+          curl -v -I https://github.com/yonggekkk/argosbx 2>&1 | head -20
+          
+          echo "6. 测试GitHub API:"
+          curl -s https://api.github.com/repos/yonggekkk/argosbx | head -10
+          
+          echo "=== 网络诊断结束 ==="
+
+      - name: 🔗 尝试添加上游仓库
+        continue-on-error: true
+        run: |
+          echo "=== Git操作测试开始 ==="
+          
+          echo "1. 显示当前Git配置:"
+          git config --list | grep -E "(user|remote)" || true
+          
+          echo "2. 显示当前远程仓库:"
+          git remote -v || true
+          
+          echo "3. 尝试添加上游仓库:"
+          git remote add upstream https://github.com/yonggekkk/argosbx.git || echo "添加远程仓库失败"
+          
+          echo "4. 显示更新后的远程仓库:"
+          git remote -v || true
+          
+          echo "5. 尝试获取上游仓库信息（超时30秒）:"
+          timeout 30 git ls-remote upstream || echo "ls-remote失败"
+          
+          echo "6. 尝试fetch上游仓库（超时60秒）:"
+          timeout 60 git fetch upstream || echo "fetch失败"
+          
+          echo "=== Git操作测试结束 ==="
+
+      - name: 📊 生成诊断报告
+        if: always()
+        run: |
+          echo "## 🔍 上游同步诊断报告" >> $GITHUB_STEP_SUMMARY
+          echo "**诊断时间:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "**目标仓库:** https://github.com/yonggekkk/argosbx" >> $GITHUB_STEP_SUMMARY
+          echo "**运行环境:** Ubuntu Latest" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "请查看上述步骤的详细日志来诊断连接问题。" >> $GITHUB_STEP_SUMMARY

@@ -50,24 +50,71 @@ jobs:
           # 设置git安全配置
           git config --global --add safe.directory /github/workspace
 
-      # 步骤3：验证上游仓库可访问性
-      - name: 🔍 验证上游仓库
+      # 步骤3：网络诊断和上游仓库验证
+      - name: 🔍 网络诊断和仓库验证
         id: check_upstream
         run: |
-          # 检查上游仓库是否可访问
-          if curl -s --head https://github.com/yonggekkk/argosbx | head -n 1 | grep -q "200 OK"; then
-            echo "upstream_accessible=true" >> $GITHUB_OUTPUT
-            echo "✅ 上游仓库可访问"
+          echo "🔍 开始网络诊断和上游仓库验证..."
+          
+          # 网络基础连接测试
+          echo "📡 测试网络连接..."
+          if ping -c 2 github.com >/dev/null 2>&1; then
+            echo "✅ GitHub网络连接正常"
           else
-            echo "upstream_accessible=false" >> $GITHUB_OUTPUT
-            echo "❌ 上游仓库不可访问"
-            exit 1
+            echo "⚠️ GitHub网络连接可能有问题"
+          fi
+          
+          # DNS解析测试
+          echo "🔍 测试DNS解析..."
+          if nslookup github.com >/dev/null 2>&1; then
+            echo "✅ DNS解析正常"
+          else
+            echo "⚠️ DNS解析可能有问题"
+          fi
+          
+          # 方法1：使用curl检查仓库页面（最可靠）
+          echo "🌐 方法1: HTTP检查仓库页面..."
+          if curl -s -f -I "https://github.com/yonggekkk/argosbx" >/dev/null 2>&1; then
+            echo "✅ HTTP检查成功 - 仓库存在"
+            echo "upstream_accessible=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ HTTP检查失败，尝试其他方法..."
+            
+            # 方法2：使用GitHub API检查
+            echo "🔍 方法2: GitHub API检查..."
+            if curl -s "https://api.github.com/repos/yonggekkk/argosbx" | grep -q '"name"'; then
+              echo "✅ GitHub API检查成功 - 仓库存在"
+              echo "upstream_accessible=true" >> $GITHUB_OUTPUT
+            else
+              echo "⚠️ GitHub API检查失败，尝试Git检查..."
+              
+              # 方法3：使用Git ls-remote检查（可能受网络限制影响）
+              echo "🔍 方法3: Git ls-remote检查..."
+              if timeout 30 git ls-remote --heads https://github.com/yonggekkk/argosbx.git >/dev/null 2>&1; then
+                echo "✅ Git ls-remote检查成功"
+                echo "upstream_accessible=true" >> $GITHUB_OUTPUT
+              else
+                echo "❌ 所有检查方法都失败了"
+                echo "upstream_accessible=false" >> $GITHUB_OUTPUT
+                
+                echo "🔧 诊断信息："
+                echo "   1. 仓库可能已被删除或设为私有"
+                echo "   2. 网络连接或防火墙问题"
+                echo "   3. GitHub服务暂时不可用"
+                echo "   4. Git协议被阻止"
+                
+                echo "⚠️ 将尝试继续执行，使用容错模式"
+              fi
+            fi
           fi
 
       # 步骤4：添加上游仓库并获取最新代码
       - name: 🔗 添加上游仓库
-        if: steps.check_upstream.outputs.upstream_accessible == 'true'
+        id: add_upstream
+        continue-on-error: true
         run: |
+          echo "🔗 配置上游仓库..."
+          
           # 检查是否已存在upstream远程仓库
           if git remote | grep -q "^upstream$"; then
             echo "📝 upstream远程仓库已存在，更新URL"
@@ -77,13 +124,44 @@ jobs:
             git remote add upstream https://github.com/yonggekkk/argosbx.git
           fi
           
-          # 从上游仓库获取最新的代码
+          # 验证远程仓库配置
+          echo "🔍 验证远程仓库配置："
+          git remote -v
+          
+          # 从上游仓库获取最新的代码（带重试机制）
           echo "📡 获取上游仓库最新代码..."
-          git fetch upstream --prune
+          
+          # 尝试获取代码，最多重试3次
+          for i in {1..3}; do
+            echo "🔄 尝试第 $i 次获取..."
+            if git fetch upstream --prune; then
+              echo "✅ 成功获取上游代码"
+              echo "fetch_success=true" >> $GITHUB_OUTPUT
+              break
+            else
+              echo "⚠️ 第 $i 次获取失败"
+              if [ $i -eq 3 ]; then
+                echo "❌ 所有获取尝试都失败了"
+                echo "fetch_success=false" >> $GITHUB_OUTPUT
+                
+                # 显示详细错误信息
+                echo "🔧 故障排除信息："
+                echo "   - 检查上游仓库是否存在: https://github.com/yonggekkk/argosbx"
+                echo "   - 检查网络连接"
+                echo "   - 检查仓库权限"
+                
+                exit 1
+              else
+                echo "⏳ 等待5秒后重试..."
+                sleep 5
+              fi
+            fi
+          done
 
       # 步骤5：检查是否有更新
       - name: 🔄 检查更新状态
         id: check_updates
+        if: steps.add_upstream.outputs.fetch_success == 'true'
         run: |
           # 获取当前分支的最新提交
           LOCAL_COMMIT=$(git rev-parse HEAD)
