@@ -8,62 +8,186 @@ on:
     - cron: '0 2 * * *'
   # 手动触发：可以在GitHub Actions页面手动运行
   workflow_dispatch:
+    inputs:
+      force_sync:
+        description: '强制同步（即使没有更新也推送）'
+        required: false
+        default: false
+        type: boolean
 
-# 权限设置：需要写入权限来推送更改
+# 权限设置：使用最小权限原则
 permissions:
   contents: write
+  actions: read
 
 jobs:
   # 同步上游仓库的任务
   sync-upstream:
     # 运行环境：使用最新的Ubuntu系统
     runs-on: ubuntu-latest
+    # 设置超时时间，避免长时间运行
+    timeout-minutes: 10
+    
     steps:
       # 步骤1：检出当前仓库代码
-      - name: Checkout your repo
+      - name: 📥 检出仓库代码
         uses: actions/checkout@v4
         with:
           # 不保存凭据，避免安全问题
           persist-credentials: false
           # 获取完整的git历史记录
           fetch-depth: 0
+          # 使用GitHub Token进行身份验证
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       # 步骤2：配置git用户信息
-      - name: Set up git
+      - name: ⚙️ 配置Git用户信息
         run: |
           # 设置git用户名为GitHub Actions机器人
           git config user.name "github-actions[bot]"
           # 设置git邮箱为GitHub Actions机器人邮箱
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # 设置git安全配置
+          git config --global --add safe.directory /github/workspace
 
-      # 步骤3：添加上游仓库并获取最新代码
-      - name: Add upstream remote
+      # 步骤3：验证上游仓库可访问性
+      - name: 🔍 验证上游仓库
+        id: check_upstream
         run: |
-          # 添加上游仓库地址（原始项目仓库）
-          git remote add upstream https://github.com/yonggekkk/argosbx.git
+          # 检查上游仓库是否可访问
+          if curl -s --head https://github.com/yonggekkk/argosbx | head -n 1 | grep -q "200 OK"; then
+            echo "upstream_accessible=true" >> $GITHUB_OUTPUT
+            echo "✅ 上游仓库可访问"
+          else
+            echo "upstream_accessible=false" >> $GITHUB_OUTPUT
+            echo "❌ 上游仓库不可访问"
+            exit 1
+          fi
+
+      # 步骤4：添加上游仓库并获取最新代码
+      - name: 🔗 添加上游仓库
+        if: steps.check_upstream.outputs.upstream_accessible == 'true'
+        run: |
+          # 检查是否已存在upstream远程仓库
+          if git remote | grep -q "^upstream$"; then
+            echo "📝 upstream远程仓库已存在，更新URL"
+            git remote set-url upstream https://github.com/yonggekkk/argosbx.git
+          else
+            echo "➕ 添加upstream远程仓库"
+            git remote add upstream https://github.com/yonggekkk/argosbx.git
+          fi
+          
           # 从上游仓库获取最新的代码
-          git fetch upstream
+          echo "📡 获取上游仓库最新代码..."
+          git fetch upstream --prune
 
-      # 步骤4：从上游仓库拉取并合并更新
-      - name: Pull from upstream and merge
+      # 步骤5：检查是否有更新
+      - name: 🔄 检查更新状态
+        id: check_updates
         run: |
-          # 从上游仓库的main分支拉取最新更改并合并到当前分支
-          git pull upstream main
+          # 获取当前分支的最新提交
+          LOCAL_COMMIT=$(git rev-parse HEAD)
+          # 获取上游分支的最新提交
+          UPSTREAM_COMMIT=$(git rev-parse upstream/main)
+          
+          echo "本地提交: $LOCAL_COMMIT"
+          echo "上游提交: $UPSTREAM_COMMIT"
+          
+          if [ "$LOCAL_COMMIT" != "$UPSTREAM_COMMIT" ]; then
+            echo "has_updates=true" >> $GITHUB_OUTPUT
+            echo "✅ 发现上游更新"
+            
+            # 检查更新数量
+            COMMITS_BEHIND=$(git rev-list --count HEAD..upstream/main)
+            echo "commits_behind=$COMMITS_BEHIND" >> $GITHUB_OUTPUT
+            echo "📊 落后 $COMMITS_BEHIND 个提交"
+          else
+            echo "has_updates=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ 已是最新版本，无需更新"
+          fi
 
-      # 步骤5：使用GitHub Token进行身份验证
-      - name: Authenticate with GITHUB_TOKEN
+      # 步骤6：合并上游更新（智能合并策略）
+      - name: 🔀 合并上游更新
+        if: steps.check_updates.outputs.has_updates == 'true' || github.event.inputs.force_sync == 'true'
+        id: merge_upstream
+        run: |
+          echo "🚀 开始合并上游更新..."
+          
+          # 尝试快进合并
+          if git merge upstream/main --ff-only; then
+            echo "merge_strategy=fast-forward" >> $GITHUB_OUTPUT
+            echo "✅ 快进合并成功"
+          else
+            echo "⚠️ 无法快进合并，尝试三方合并..."
+            
+            # 检查是否有冲突
+            if git merge upstream/main --no-edit; then
+              echo "merge_strategy=three-way" >> $GITHUB_OUTPUT
+              echo "✅ 三方合并成功"
+            else
+              echo "❌ 合并冲突，需要手动处理"
+              echo "merge_strategy=conflict" >> $GITHUB_OUTPUT
+              
+              # 显示冲突文件
+              echo "冲突文件列表："
+              git diff --name-only --diff-filter=U
+              
+              # 中止合并
+              git merge --abort
+              exit 1
+            fi
+          fi
+
+      # 步骤7：验证合并结果
+      - name: ✅ 验证合并结果
+        if: steps.merge_upstream.outcome == 'success'
+        run: |
+          echo "🔍 验证合并结果..."
+          
+          # 检查工作目录是否干净
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "✅ 工作目录干净"
+          else
+            echo "⚠️ 工作目录有未提交的更改"
+            git status
+          fi
+          
+          # 显示最新的几个提交
+          echo "📝 最新提交历史："
+          git log --oneline -5
+
+      # 步骤8：推送更改到当前仓库
+      - name: 📤 推送更改
+        if: steps.check_updates.outputs.has_updates == 'true' || github.event.inputs.force_sync == 'true'
         env:
-          # 使用GitHub自动提供的访问令牌
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 设置origin远程仓库的URL，包含访问令牌用于身份验证
-          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/xzq849/argosbx.git
+          echo "🚀 推送更改到origin仓库..."
+          
+          # 设置远程仓库URL（使用token认证）
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
+          
+          # 推送到main分支
+          if git push origin main; then
+            echo "✅ 推送成功"
+          else
+            echo "❌ 推送失败"
+            exit 1
+          fi
 
-      # 步骤6：推送更改到当前仓库
-      - name: Push changes to origin
-        env:
-          # 使用GitHub访问令牌进行身份验证
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # 步骤9：生成同步报告
+      - name: 📊 生成同步报告
+        if: always()
         run: |
-          # 将合并后的更改推送到当前仓库的main分支
-          git push origin main
+          echo "## 🔄 上游同步报告" >> $GITHUB_STEP_SUMMARY
+          echo "**同步时间:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "**上游仓库:** https://github.com/yonggekkk/argosbx" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.check_updates.outputs.has_updates }}" == "true" ]; then
+            echo "**更新状态:** ✅ 发现并处理了 ${{ steps.check_updates.outputs.commits_behind }} 个新提交" >> $GITHUB_STEP_SUMMARY
+            echo "**合并策略:** ${{ steps.merge_upstream.outputs.merge_strategy }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**更新状态:** ℹ️ 已是最新版本" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "**工作流状态:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
