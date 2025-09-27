@@ -1,4 +1,4 @@
-名字: Upstream Sync
+name: Upstream Sync
 
 on:
   schedule:
@@ -12,33 +12,33 @@ jobs:
   sync-upstream:
     runs-on: ubuntu-latest
     steps:
-      - 名字: Checkout your repo
+      - name: Checkout your repo
         uses: actions/checkout@v4
         with:
           persist-credentials: false
           fetch-depth: 0
 
-      - 名字: Set up git
+      - name: Set up git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - 名字: Add upstream remote
+      - name: Add upstream remote
         run: |
           git remote add upstream https://github.com/yonggekkk/argosbx.git
           git fetch upstream
 
-      - 名字: Pull from upstream and merge
+      - name: Pull from upstream and merge
         run: |
           git pull upstream main
 
-      - 名字: Authenticate with GITHUB_TOKEN
+      - name: Authenticate with GITHUB_TOKEN
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/xzq849/argosbx.git
 
-      - 名字: Push changes to origin
+      - name: Push changes to origin
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
