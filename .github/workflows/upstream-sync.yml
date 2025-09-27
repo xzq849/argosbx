@@ -1,45 +1,69 @@
+# 上游同步工作流 - 自动同步上游仓库的更新
 name: Upstream Sync
 
+# 触发条件
 on:
+  # 定时触发：每天凌晨2点执行（UTC时间）
   schedule:
     - cron: '0 2 * * *'
+  # 手动触发：可以在GitHub Actions页面手动运行
   workflow_dispatch:
 
+# 权限设置：需要写入权限来推送更改
 permissions:
   contents: write
 
 jobs:
+  # 同步上游仓库的任务
   sync-upstream:
+    # 运行环境：使用最新的Ubuntu系统
     runs-on: ubuntu-latest
     steps:
+      # 步骤1：检出当前仓库代码
       - name: Checkout your repo
         uses: actions/checkout@v4
         with:
+          # 不保存凭据，避免安全问题
           persist-credentials: false
+          # 获取完整的git历史记录
           fetch-depth: 0
 
+      # 步骤2：配置git用户信息
       - name: Set up git
         run: |
+          # 设置git用户名为GitHub Actions机器人
           git config user.name "github-actions[bot]"
+          # 设置git邮箱为GitHub Actions机器人邮箱
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+      # 步骤3：添加上游仓库并获取最新代码
       - name: Add upstream remote
         run: |
+          # 添加上游仓库地址（原始项目仓库）
           git remote add upstream https://github.com/yonggekkk/argosbx.git
+          # 从上游仓库获取最新的代码
           git fetch upstream
 
+      # 步骤4：从上游仓库拉取并合并更新
       - name: Pull from upstream and merge
         run: |
+          # 从上游仓库的main分支拉取最新更改并合并到当前分支
           git pull upstream main
 
+      # 步骤5：使用GitHub Token进行身份验证
       - name: Authenticate with GITHUB_TOKEN
         env:
+          # 使用GitHub自动提供的访问令牌
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # 设置origin远程仓库的URL，包含访问令牌用于身份验证
           git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/xzq849/argosbx.git
 
+      # 步骤6：推送更改到当前仓库
       - name: Push changes to origin
         env:
+          # 使用GitHub访问令牌进行身份验证
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # 将合并后的更改推送到当前仓库的main分支
           git push origin main
